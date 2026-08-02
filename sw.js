@@ -1,4 +1,4 @@
-var CACHE = 'log-v1';
+var CACHE = 'log-v2';
 var ASSETS = ['./', './log.html', './manifest.json'];
 
 self.addEventListener('install', function (e) {
