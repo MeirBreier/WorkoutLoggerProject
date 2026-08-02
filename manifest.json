@@ -1,0 +1,19 @@
+{
+  "name": "Log",
+  "short_name": "Log",
+  "description": "Workout log",
+  "start_url": "./log.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#12161B",
+  "theme_color": "#12161B",
+  "icons": [
+    {
+      "src": "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 512 512'><rect width='512' height='512' fill='%2312161B'/><rect x='104' y='238' width='304' height='36' rx='8' fill='%238FB4D9'/><rect x='56' y='192' width='44' height='128' rx='12' fill='%238FB4D9'/><rect x='412' y='192' width='44' height='128' rx='12' fill='%238FB4D9'/><rect x='16' y='222' width='30' height='68' rx='8' fill='%235B6673'/><rect x='466' y='222' width='30' height='68' rx='8' fill='%235B6673'/></svg>",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
+}
