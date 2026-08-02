@@ -949,12 +949,35 @@ function mergeEx(id) {
 
 /* ================= DATA ================= */
 function exportText() {
-  var out = [], groups = {};
-  for (var x = 0; x < DB.exercises.length; x++) {
-    var e = DB.exercises[x];
-    for (var y = 0; y < (e.pins || []).length; y++) {
-      var g = e.pins[y].gym === null ? 'all' : e.pins[y].gym;
-      (groups[g] = groups[g] || []).push(e.name + ' ## ' + e.pins[y].text);
+  var out = [], s = DB.settings;
+
+  out.push('# settings');
+  out.push('bodyweight: ' + s.bodyweight);
+  out.push('unit: ' + s.unit);
+  out.push('gyms: ' + s.gyms.join(', '));
+  out.push('');
+
+  if (DB.exercises.length) {
+    out.push('# exercises');
+    for (var x = 0; x < DB.exercises.length; x++) {
+      var e = DB.exercises[x], f = [e.name];
+      if (e.aliases && e.aliases.length) f.push('aliases: ' + e.aliases.join(', '));
+      f.push('gym: ' + e.gym);
+      f.push('type: ' + e.type);
+      f.push('inc: ' + e.increment);
+      if (e.perSide) f.push('perside');
+      if (e.archived) f.push('archived');
+      out.push(f.join(' | '));
+    }
+    out.push('');
+  }
+
+  var groups = {};
+  for (var a = 0; a < DB.exercises.length; a++) {
+    var ex = DB.exercises[a];
+    for (var b = 0; b < (ex.pins || []).length; b++) {
+      var g = ex.pins[b].gym === null ? 'all' : ex.pins[b].gym;
+      (groups[g] = groups[g] || []).push(ex.name + ' ## ' + ex.pins[b].text);
     }
   }
   for (var k in groups) {
@@ -962,14 +985,23 @@ function exportText() {
     out = out.concat(groups[k]);
     out.push('');
   }
-  var ss = DB.sessions.slice().sort(function (a, b) { return a.date < b.date ? -1 : 1; });
+
+  for (var t = 0; t < DB.templates.length; t++) {
+    out.push('# template ' + DB.templates[t].name);
+    out.push(DB.templates[t].exerciseIds.map(function (id) {
+      var q = exerciseById(id); return q ? q.name : null;
+    }).filter(Boolean).join(', '));
+    out.push('');
+  }
+
+  var ss = DB.sessions.slice().sort(function (m, n) { return m.date < n.date ? -1 : 1; });
   for (var i = 0; i < ss.length; i++) {
-    var s = ss[i];
-    if (!s.entries.length) continue;
-    out.push('# ' + s.date + ' | ' + s.gym);
-    for (var j = 0; j < s.entries.length; j++) {
-      var e = exerciseById(s.entries[j].exerciseId);
-      out.push((e ? e.name : '?') + ' ' + fmtSets(collapse(s.entries[j].sets)) + (s.entries[j].note ? ' // ' + s.entries[j].note : ''));
+    var sn = ss[i];
+    if (!sn.entries.length) continue;
+    out.push('# ' + sn.date + ' | ' + sn.gym);
+    for (var j = 0; j < sn.entries.length; j++) {
+      var en = sn.entries[j], ee = exerciseById(en.exerciseId);
+      out.push((ee ? ee.name : '?') + ' ' + fmtSets(collapse(en.sets)) + (en.note ? ' // ' + en.note : ''));
     }
     out.push('');
   }
@@ -1009,13 +1041,64 @@ function pushRow(rows, s, ex, n, st, isDrop, note) {
 function importText(txt) {
   var lines = txt.split(/\r?\n/);
   var date = today(), gym = DB.settings.gym, added = 0, skipped = 0, pinned = 0, pinGym = false;
+  var mode = 'session', tplName = null, exCount = 0;
   for (var i = 0; i < lines.length; i++) {
     var L = lines[i].trim();
     if (!L) continue;
-    var pm = /^#\s*pins\s*@\s*(.+)$/i.exec(L);
-    if (pm) { pinGym = pm[1].trim().toLowerCase() === 'all' ? null : pm[1].trim(); continue; }
     var hm = /^#\s*(\d{4}-\d{2}-\d{2})\s*(?:\|\s*(.+))?$/.exec(L);
-    if (hm) { date = hm[1]; gym = (hm[2] || gym).trim(); pinGym = false; continue; }
+    if (hm) { date = hm[1]; gym = (hm[2] || gym).trim(); pinGym = false; mode = 'session'; continue; }
+    if (/^#\s*settings\s*$/i.test(L)) { mode = 'settings'; continue; }
+    if (/^#\s*exercises\s*$/i.test(L)) { mode = 'exercises'; continue; }
+    var tm = /^#\s*template\s+(.+)$/i.exec(L);
+    if (tm) { mode = 'template'; tplName = tm[1].trim(); continue; }
+    var pm = /^#\s*pins\s*@\s*(.+)$/i.exec(L);
+    if (pm) { mode = 'pins'; pinGym = pm[1].trim().toLowerCase() === 'all' ? null : pm[1].trim(); continue; }
+
+    if (mode === 'settings') {
+      var sm = /^([a-z]+)\s*:\s*(.+)$/i.exec(L);
+      if (sm) {
+        var key = sm[1].toLowerCase(), val = sm[2].trim();
+        if (key === 'bodyweight') DB.settings.bodyweight = parseFloat(val) || DB.settings.bodyweight;
+        else if (key === 'unit') DB.settings.unit = val;
+        else if (key === 'gyms') {
+          var gl = val.split(',').map(function (z) { return z.trim(); }).filter(Boolean);
+          for (var gi = 0; gi < gl.length; gi++) if (DB.settings.gyms.indexOf(gl[gi]) < 0) DB.settings.gyms.push(gl[gi]);
+        }
+      }
+      continue;
+    }
+    if (mode === 'exercises') {
+      var f = L.split('|').map(function (z) { return z.trim(); });
+      var nm = f.shift();
+      if (!nm) { skipped++; continue; }
+      var ex0 = findExercise(nm);
+      if (!ex0) { ex0 = newExercise(nm, { gym: gym }); exCount++; }
+      for (var fi = 0; fi < f.length; fi++) {
+        var kv = /^([a-z]+)\s*:\s*(.+)$/i.exec(f[fi]);
+        if (kv) {
+          var kk = kv[1].toLowerCase(), vv = kv[2].trim();
+          if (kk === 'aliases') {
+            var al = vv.split(',').map(function (z) { return z.trim(); }).filter(Boolean);
+            for (var ai = 0; ai < al.length; ai++) if (ex0.aliases.indexOf(al[ai]) < 0) ex0.aliases.push(al[ai]);
+          } else if (kk === 'gym') ex0.gym = vv;
+          else if (kk === 'type') ex0.type = vv;
+          else if (kk === 'inc') ex0.increment = parseFloat(vv) || ex0.increment;
+        } else if (/^perside$/i.test(f[fi])) ex0.perSide = true;
+        else if (/^archived$/i.test(f[fi])) ex0.archived = true;
+      }
+      continue;
+    }
+    if (mode === 'template') {
+      var names = L.split(',').map(function (z) { return z.trim(); }).filter(Boolean);
+      var ids = [];
+      for (var ti = 0; ti < names.length; ti++) {
+        var te = findExercise(names[ti]) || newExercise(names[ti], { gym: gym });
+        ids.push(te.id);
+      }
+      if (ids.length && !DB.templates.some(function (z) { return z.name === tplName; }))
+        DB.templates.push({ id: uid(), name: tplName, exerciseIds: ids });
+      continue;
+    }
     if (L.indexOf('#') === 0) continue;
     var p = splitLine(L);
     if (p.pin && !p.body) {
@@ -1027,19 +1110,26 @@ function importText(txt) {
       continue;
     }
     if (!p.name || !p.body) { skipped++; continue; }
+    if (/^(same|next|[+-]\d*)$/i.test(p.body.trim())) { skipped++; continue; }
     var r = parseSets(p.body);
     if (r.error) { skipped++; continue; }
     var ex = findExercise(p.name) || newExercise(p.name, { gym: gym });
     var sess = null;
     for (var k = 0; k < DB.sessions.length; k++) if (DB.sessions[k].date === date && DB.sessions[k].gym === gym) sess = DB.sessions[k];
     if (!sess) { sess = { id: uid(), date: date, gym: gym, entries: [] }; DB.sessions.push(sess); }
-    sess.entries.push({ exerciseId: ex.id, sets: expandSets(r.sets), note: p.note || '' });
+    var impSets = expandSets(r.sets);
+    var impType = typeOfSets(impSets);
+    if (ex.type === 'free' && impType !== 'free') {
+      ex.type = impType;
+      if (!ex.increment) ex.increment = DEFAULT_INC[impType];
+    }
+    sess.entries.push({ exerciseId: ex.id, sets: impSets, note: p.note || '' });
     if (p.pin) { ex.pins = ex.pins || []; ex.pins.push({ id: uid(), text: p.pin, gym: gym }); pinned++; }
     added++;
   }
   DB.sessions.sort(function (a, b) { return a.date < b.date ? -1 : 1; });
   save();
-  return { added: added, skipped: skipped, pinned: pinned };
+  return { added: added, skipped: skipped, pinned: pinned, exercises: exCount };
 }
 function download(name, text) {
   try {
@@ -1059,7 +1149,7 @@ function renderData() {
   if (!canPersist) h += '<div class="warn">This page cannot write to storage right now. Open the file directly on your device for saving to work.</div>';
   else if (!backedUpRecently()) h += '<div class="warn">No recent export. iOS clears browser storage on its own schedule — save a copy while you are thinking about it.</div>';
   h += '<h2>Export</h2>';
-  h += '<div class="card"><div class="t">Shorthand text</div><div class="d">Exactly what you typed. This file imports back in, so it is the real copy of your log.</div>' +
+  h += '<div class="card"><div class="t">Shorthand text</div><div class="d">Everything: exercises, aliases, pins, templates, settings, and every session. Imports back in, so it is a complete backup.</div>' +
     '<div style="margin-top:10px"><button class="btn pri" onclick="download(\'workouts.txt\', exportText())">Save .txt</button> <button class="btn sm" onclick="showBox(exportText())">Show to copy</button></div></div>';
   h += '<div class="card"><div class="t">Spreadsheet</div><div class="d">One row per set, parsed into columns. For Excel on a real computer.</div>' +
     '<div style="margin-top:10px"><button class="btn" onclick="download(\'workouts.csv\', exportCSV())">Save .csv</button> <button class="btn sm" onclick="showBox(exportCSV())">Show to copy</button></div></div>';
@@ -1085,7 +1175,7 @@ function doImport() {
   if (!t.trim()) { toast('Paste something first.'); return; }
   var r = importText(t);
   renderData(); renderLog();
-  toast('Added ' + r.added + ' lines' + (r.pinned ? ', ' + r.pinned + ' pins' : '') + (r.skipped ? ', skipped ' + r.skipped : ''));
+  toast('Added ' + r.added + ' lines' + (r.exercises ? ', ' + r.exercises + ' exercises' : '') + (r.pinned ? ', ' + r.pinned + ' pins' : '') + (r.skipped ? ', skipped ' + r.skipped : ''));
 }
 function saveSettings() {
   DB.settings.bodyweight = parseFloat($('sBw').value) || DB.settings.bodyweight;
