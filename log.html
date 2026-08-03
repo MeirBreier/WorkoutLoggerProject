@@ -175,6 +175,7 @@ var DB = load();
 function uid() { return Math.random().toString(36).slice(2, 9); }
 function pad2(n) { return n < 10 ? '0' + n : '' + n; }
 function today() { var d = new Date(); return d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate()); }
+function nowTime() { var d = new Date(); return pad2(d.getHours()) + ':' + pad2(d.getMinutes()); }
 function daysBetween(a, b) { return Math.round((new Date(b + 'T00:00:00') - new Date(a + 'T00:00:00')) / 86400000); }
 function agoText(date) {
   var d = daysBetween(date, today());
@@ -220,6 +221,14 @@ function newExercise(name, opts) {
   DB.exercises.push(e); save(); return e;
 }
 function exerciseById(id) { for (var i = 0; i < DB.exercises.length; i++) if (DB.exercises[i].id === id) return DB.exercises[i]; return null; }
+function sessionsToday(gym) {
+  var out = [];
+  for (var i = 0; i < DB.sessions.length; i++) {
+    var s = DB.sessions[i];
+    if (s.date === today() && s.gym === gym) out.push(s);
+  }
+  return out;
+}
 function lastUseOf(id) {
   for (var i = DB.sessions.length - 1; i >= 0; i--) {
     var s = DB.sessions[i];
@@ -553,12 +562,24 @@ function esc(s) { return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').
 function curSession(make) {
   for (var i = DB.sessions.length - 1; i >= 0; i--) {
     var s = DB.sessions[i];
-    if (s.date === today() && s.gym === DB.settings.gym) return s;
+    if (s.date === today() && s.gym === DB.settings.gym && !s.closed) return s;
   }
   if (!make) return null;
-  var ns = { id: uid(), date: today(), gym: DB.settings.gym, entries: [] };
+  var ns = { id: uid(), date: today(), time: nowTime(), gym: DB.settings.gym, entries: [], closed: false };
   DB.sessions.push(ns); DB.settings.sessionCount++; save();
   return ns;
+}
+function closeSession() {
+  var s = curSession(false);
+  if (!s || !s.entries.length) { toast('Nothing to close.'); return; }
+  s.closed = true; save(); renderLog();
+  toast('Session closed. The next thing you log starts a new one.');
+}
+function reopenSession(id) {
+  var open = curSession(false);
+  if (open) { toast('Close the current session first.'); return; }
+  for (var i = 0; i < DB.sessions.length; i++) if (DB.sessions[i].id === id) DB.sessions[i].closed = false;
+  save(); renderLog();
 }
 
 /* ================= LOG ================= */
@@ -572,7 +593,11 @@ function renderLog() {
   else if (DB.settings.sessionCount > 0 && DB.settings.sessionCount % 12 === 0 && !backedUpRecently()) {
     h += '<div class="warn">It has been a while since you exported. Head to Data and save a copy — iOS clears browser storage on its own schedule.</div>';
   }
-  if (!s || !s.entries.length) {
+  var todays = sessionsToday(DB.settings.gym);
+  var anything = false;
+  for (var q = 0; q < todays.length; q++) if (todays[q].entries.length) anything = true;
+
+  if (!anything) {
     h += '<div class="empty">Nothing logged today. Type an exercise below, or start from what you did last time.</div>';
     h += '<div class="row" style="gap:8px;flex-wrap:wrap">';
     h += '<button class="btn sm" onclick="repeatLast()">Repeat last session</button>';
@@ -580,8 +605,19 @@ function renderLog() {
     if (DB.sessions.length) h += '<button class="btn sm" onclick="saveTemplatePrompt()">Save template</button>';
     h += '</div>';
   } else {
-    for (var i = 0; i < s.entries.length; i++) h += entryHTML(s.entries[i], i);
-    h += '<div class="row" style="margin-top:14px"><button class="btn sm" onclick="saveTemplatePrompt()">Save as template</button></div>';
+    for (var t = 0; t < todays.length; t++) {
+      var ts = todays[t];
+      if (!ts.entries.length) continue;
+      if (todays.length > 1 || ts.closed) {
+        h += '<h2>' + (ts.time || 'session') + (ts.closed ? ' · closed' : ' · open') +
+          (ts.closed ? ' <button class="btn sm" style="margin-left:8px" onclick="reopenSession(\'' + ts.id + '\')">reopen</button>' : '') + '</h2>';
+      }
+      for (var i = 0; i < ts.entries.length; i++) h += entryHTML(ts.entries[i], i);
+    }
+    h += '<div class="row" style="margin-top:14px;gap:8px;flex-wrap:wrap">';
+    if (s && s.entries.length) h += '<button class="btn sm" onclick="closeSession()">Close session</button>';
+    h += '<button class="btn sm" onclick="saveTemplatePrompt()">Save as template</button>';
+    h += '</div>';
   }
   $('logBody').innerHTML = h;
 }
@@ -738,10 +774,10 @@ function quick(cmd) {
   submit();
 }
 function repeatLast() {
-  var prev = null;
+  var prev = null, cur0 = curSession(false);
   for (var i = DB.sessions.length - 1; i >= 0; i--) {
     var s = DB.sessions[i];
-    if (s.date === today() && s.gym === DB.settings.gym) continue;
+    if (cur0 && s.id === cur0.id) continue;
     if (s.entries.length) { prev = s; break; }
   }
   if (!prev) { toast('No earlier session to repeat.'); return; }
@@ -998,7 +1034,7 @@ function exportText() {
   for (var i = 0; i < ss.length; i++) {
     var sn = ss[i];
     if (!sn.entries.length) continue;
-    out.push('# ' + sn.date + ' | ' + sn.gym);
+    out.push('# ' + sn.date + (sn.time ? ' ' + sn.time : '') + ' | ' + sn.gym);
     for (var j = 0; j < sn.entries.length; j++) {
       var en = sn.entries[j], ee = exerciseById(en.exerciseId);
       out.push((ee ? ee.name : '?') + ' ' + fmtSets(collapse(en.sets)) + (en.note ? ' // ' + en.note : ''));
@@ -1041,12 +1077,12 @@ function pushRow(rows, s, ex, n, st, isDrop, note) {
 function importText(txt) {
   var lines = txt.split(/\r?\n/);
   var date = today(), gym = DB.settings.gym, added = 0, skipped = 0, pinned = 0, pinGym = false;
-  var mode = 'session', tplName = null, exCount = 0;
+  var mode = 'session', tplName = null, exCount = 0, stime = null;
   for (var i = 0; i < lines.length; i++) {
     var L = lines[i].trim();
     if (!L) continue;
-    var hm = /^#\s*(\d{4}-\d{2}-\d{2})\s*(?:\|\s*(.+))?$/.exec(L);
-    if (hm) { date = hm[1]; gym = (hm[2] || gym).trim(); pinGym = false; mode = 'session'; continue; }
+    var hm = /^#\s*(\d{4}-\d{2}-\d{2})(?:\s+(\d{1,2}:\d{2}))?\s*(?:\|\s*(.+))?$/.exec(L);
+    if (hm) { date = hm[1]; stime = hm[2] || null; gym = (hm[3] || gym).trim(); pinGym = false; mode = 'session'; continue; }
     if (/^#\s*settings\s*$/i.test(L)) { mode = 'settings'; continue; }
     if (/^#\s*exercises\s*$/i.test(L)) { mode = 'exercises'; continue; }
     var tm = /^#\s*template\s+(.+)$/i.exec(L);
@@ -1103,8 +1139,8 @@ function importText(txt) {
     var p = splitLine(L);
     if (p.pin && !p.body) {
       if (!p.name) { skipped++; continue; }
-      var pex = findExercise(p.name) || newExercise(p.name, { gym: gym });
       var scope = pinGym === false ? gym : pinGym;
+      var pex = findExercise(p.name) || newExercise(p.name, { gym: scope || gym });
       var dupe = (pex.pins || []).some(function (q) { return q.text === p.pin && q.gym === scope; });
       if (!dupe) { pex.pins = pex.pins || []; pex.pins.push({ id: uid(), text: p.pin, gym: scope }); pinned++; }
       continue;
@@ -1115,8 +1151,9 @@ function importText(txt) {
     if (r.error) { skipped++; continue; }
     var ex = findExercise(p.name) || newExercise(p.name, { gym: gym });
     var sess = null;
-    for (var k = 0; k < DB.sessions.length; k++) if (DB.sessions[k].date === date && DB.sessions[k].gym === gym) sess = DB.sessions[k];
-    if (!sess) { sess = { id: uid(), date: date, gym: gym, entries: [] }; DB.sessions.push(sess); }
+    for (var k = 0; k < DB.sessions.length; k++)
+      if (DB.sessions[k].date === date && DB.sessions[k].gym === gym && (DB.sessions[k].time || null) === stime) sess = DB.sessions[k];
+    if (!sess) { sess = { id: uid(), date: date, time: stime, gym: gym, entries: [], closed: date !== today() }; DB.sessions.push(sess); }
     var impSets = expandSets(r.sets);
     var impType = typeOfSets(impSets);
     if (ex.type === 'free' && impType !== 'free') {
@@ -1127,7 +1164,16 @@ function importText(txt) {
     if (p.pin) { ex.pins = ex.pins || []; ex.pins.push({ id: uid(), text: p.pin, gym: gym }); pinned++; }
     added++;
   }
-  DB.sessions.sort(function (a, b) { return a.date < b.date ? -1 : 1; });
+  DB.sessions.sort(function (a, b) {
+    if (a.date !== b.date) return a.date < b.date ? -1 : 1;
+    return (a.time || '') < (b.time || '') ? -1 : 1;
+  });
+  var seen = {};
+  for (var z = DB.sessions.length - 1; z >= 0; z--) {
+    var sz = DB.sessions[z];
+    if (sz.date !== today()) { sz.closed = true; continue; }
+    if (seen[sz.gym]) sz.closed = true; else { seen[sz.gym] = 1; sz.closed = false; }
+  }
   save();
   return { added: added, skipped: skipped, pinned: pinned, exercises: exCount };
 }
