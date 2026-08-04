@@ -58,7 +58,8 @@ h2:first-child{margin-top:0}
 .ac button{flex:0 0 auto;background:var(--panel2);border:1px solid var(--rule);border-radius:999px;padding:5px 11px;font-size:13px;white-space:nowrap}
 .ac button.hot{border-color:var(--chalk);color:var(--chalk)}
 .pad .bar{display:flex;gap:6px;align-items:center;margin-top:7px}
-.pad .bar button{background:var(--panel2);border:1px solid var(--rule);border-radius:7px;padding:6px 10px;font-size:13px;font-family:var(--mono)}
+.pad .bar button{background:var(--panel2);border:1px solid var(--rule);border-radius:7px;padding:6px 9px;font-size:13px;font-family:var(--mono)}
+.pad .bar #bAt{color:var(--chalk);font-size:15px;padding:5px 11px}
 .pad .bar .go{background:var(--chalk);color:#0F1418;border-color:var(--chalk);font-weight:500;padding:6px 16px}
 .pad .timer{margin-left:auto;font-family:var(--mono);font-size:13px;color:var(--dim)}
 
@@ -113,6 +114,7 @@ label.lb{display:block;font-size:12px;color:var(--dim);margin-top:10px}
   <input id="inp" placeholder="bench 8@135, 8@140, 6@145!" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" enterkeyhint="done">
   <div class="ac" id="ac"></div>
   <div class="bar">
+    <button id="bAt" title="Insert @">@</button>
     <button id="bSame" title="Repeat last session">same</button>
     <button id="bPlus" title="One increment up">+</button>
     <button id="bUndo" title="Remove last entry">undo</button>
@@ -544,6 +546,106 @@ function removePin(ex, id) {
   save();
 }
 
+
+/* ---------- comparison, PRs, stalls, trends ---------- */
+function entryScore(entry, type) {
+  var f = flatten(entry.sets);
+  if (type === 'load') return bestE1rm(f);
+  if (type === 'distance') {
+    var best = null;
+    for (var i = 0; i < f.length; i++) {
+      if (f[i].mark === '~') continue;
+      var pc = pace(f[i]);
+      if (pc && (best === null || pc.sec < best)) best = pc.sec;
+    }
+    return best === null ? null : -best;
+  }
+  if (type === 'effort') {
+    var m = null;
+    for (var j = 0; j < f.length; j++) {
+      if (f[j].mark === '~') continue;
+      if (f[j].i && typeof f[j].i.v === 'number' && (m === null || f[j].i.v > m)) m = f[j].i.v;
+    }
+    return m;
+  }
+  return null;
+}
+function allEntriesOf(id) {
+  var out = [];
+  for (var i = 0; i < DB.sessions.length; i++) {
+    var s = DB.sessions[i];
+    for (var j = 0; j < s.entries.length; j++)
+      if (s.entries[j].exerciseId === id) out.push({ date: s.date, time: s.time || '', gym: s.gym, entry: s.entries[j] });
+  }
+  out.sort(function (a, b) {
+    if (a.date !== b.date) return a.date < b.date ? -1 : 1;
+    return a.time < b.time ? -1 : 1;
+  });
+  return out;
+}
+function isPR(ex, entry) {
+  if (!ex || ex.type === 'free') return false;
+  var mine = entryScore(entry, ex.type);
+  if (mine === null) return false;
+  var all = allEntriesOf(ex.id), seenSelf = false, best = null;
+  for (var i = 0; i < all.length; i++) {
+    if (all[i].entry === entry) { seenSelf = true; continue; }
+    if (seenSelf) continue;
+    var v = entryScore(all[i].entry, ex.type);
+    if (v !== null && (best === null || v > best)) best = v;
+  }
+  return best !== null && mine > best;
+}
+function topIntensity(entry, type) {
+  var f = flatten(entry.sets), m = null;
+  for (var i = 0; i < f.length; i++) {
+    var v = null;
+    if (type === 'load') v = totalLoad(f[i]);
+    else if (f[i].i && typeof f[i].i.v === 'number') v = f[i].i.v;
+    if (v !== null && (m === null || v > m)) m = v;
+  }
+  return m;
+}
+function stallCount(ex, gym) {
+  if (!ex || ex.type === 'free') return 0;
+  var all = allEntriesOf(ex.id).filter(function (r) { return r.gym === gym; });
+  if (all.length < 3) return 0;
+  var last = all.slice(-4).reverse(), ref = topIntensity(last[0].entry, ex.type), n = 0;
+  if (ref === null) return 0;
+  for (var i = 0; i < last.length; i++) {
+    if (topIntensity(last[i].entry, ex.type) === ref) n++;
+    else break;
+  }
+  return n >= 3 ? n : 0;
+}
+function trendInfo(ex) {
+  if (!ex || ex.type === 'free') return null;
+  var all = allEntriesOf(ex.id), pts = [];
+  for (var i = 0; i < all.length; i++) {
+    var v = entryScore(all[i].entry, ex.type);
+    if (v !== null) pts.push({ date: all[i].date, v: v });
+  }
+  if (pts.length < 3) return null;
+  var first = pts[0], last = pts[pts.length - 1];
+  var days = daysBetween(first.date, last.date);
+  if (days < 14) return null;
+  var span = days < 60 ? Math.round(days / 7) + ' weeks' : Math.round(days / 30) + ' months';
+  var d = last.v - first.v;
+  if (ex.type === 'distance') {
+    var secs = Math.round(d);
+    if (Math.abs(secs) < 2) return 'pace flat over ' + span;
+    var pu = '';
+    for (var z = all.length - 1; z >= 0 && !pu; z--) {
+      var pz = pace(flatten(all[z].entry.sets)[0]);
+      if (pz) pu = '/' + pz.unit;
+    }
+    return (secs > 0 ? fmtClock(secs) + pu + ' faster' : fmtClock(-secs) + pu + ' slower') + ' over ' + span;
+  }
+  var unit = ex.type === 'load' ? ' ' + DB.settings.unit : '';
+  if (Math.abs(d) < 1) return 'flat over ' + span;
+  return (d > 0 ? '+' : '') + Math.round(d) + unit + ' over ' + span;
+}
+
 var $ = function (id) { return document.getElementById(id); };
 var TYPE_HINT = {
   load: 'More weight is better. + adds your increment.',
@@ -599,8 +701,28 @@ function renderLog() {
 
   if (!anything) {
     h += '<div class="empty">Nothing logged today. Type an exercise below, or start from what you did last time.</div>';
+    var recent = [];
+    for (var rr = DB.sessions.length - 1; rr >= 0 && recent.length < 3; rr--) {
+      var rs = DB.sessions[rr];
+      if (rs.date === today() && rs.gym === DB.settings.gym) continue;
+      if (rs.entries.length) recent.push(rs);
+    }
+    if (recent.length) {
+      h += '<h2>Start from</h2>';
+      for (var rj = 0; rj < recent.length; rj++) {
+        var rsn = recent[rj];
+        var names = [];
+        for (var rk = 0; rk < rsn.entries.length; rk++) {
+          var rex = exerciseById(rsn.entries[rk].exerciseId);
+          if (rex && names.indexOf(rex.name) < 0) names.push(rex.name);
+        }
+        h += '<div class="card"><div class="row"><div class="t">' + agoText(rsn.date) + ' · ' + rsn.date +
+          (rsn.gym !== DB.settings.gym ? '<span class="pill">' + esc(rsn.gym) + '</span>' : '') + '</div>' +
+          '<button class="sp btn sm" onclick="startFrom(\'' + rsn.id + '\')">Start</button></div>' +
+          '<div class="d">' + esc(names.join(' · ')) + '</div></div>';
+      }
+    }
     h += '<div class="row" style="gap:8px;flex-wrap:wrap">';
-    h += '<button class="btn sm" onclick="repeatLast()">Repeat last session</button>';
     if (DB.templates.length) h += '<button class="btn sm" onclick="openTemplates()">Use a template</button>';
     if (DB.sessions.length) h += '<button class="btn sm" onclick="saveTemplatePrompt()">Save template</button>';
     h += '</div>';
@@ -612,7 +734,7 @@ function renderLog() {
         h += '<h2>' + (ts.time || 'session') + (ts.closed ? ' · closed' : ' · open') +
           (ts.closed ? ' <button class="btn sm" style="margin-left:8px" onclick="reopenSession(\'' + ts.id + '\')">reopen</button>' : '') + '</h2>';
       }
-      for (var i = 0; i < ts.entries.length; i++) h += entryHTML(ts.entries[i], i);
+      for (var i = 0; i < ts.entries.length; i++) h += entryHTML(ts.entries[i], ts.id, i);
     }
     h += '<div class="row" style="margin-top:14px;gap:8px;flex-wrap:wrap">';
     if (s && s.entries.length) h += '<button class="btn sm" onclick="closeSession()">Close session</button>';
@@ -624,12 +746,14 @@ function renderLog() {
 function backedUpRecently() {
   return DB.settings.lastBackup && daysBetween(DB.settings.lastBackup, today()) < 21;
 }
-function entryHTML(en, idx) {
+function entryHTML(en, sid, idx) {
   var ex = exerciseById(en.exerciseId);
   var sets = collapse(en.sets);
   var meta = entryStats(en);
   var h = '<div class="entry">';
-  h += '<div class="nm">' + esc(ex ? ex.name : '?') + '</div>';
+  h += '<div class="row"><div class="nm">' + esc(ex ? ex.name : '?') +
+    (isPR(ex, en) ? '<span class="pill">PR</span>' : '') + '</div>' +
+    '<button class="sp btn sm" onclick="editEntry(\'' + sid + '\',' + idx + ')">edit</button></div>';
   h += '<div class="ln">' + fmtSetsHTML(sets) + '</div>';
   if (meta.length) h += '<div class="meta">' + meta.join(' · ') + '</div>';
   if (en.note) h += '<div class="note">' + esc(en.note) + '</div>';
@@ -654,6 +778,8 @@ function onInput() {
       ghost = 'last: ' + fmtSets(collapse(lu.entry.sets)) + ' · ' + agoText(lu.date);
       if (st.length) ghost += ' · ' + st[0];
       if (lu.gym !== DB.settings.gym) ghost += '  <span class="ag">@' + esc(lu.gym) + '</span>';
+      var sc = stallCount(ex, DB.settings.gym);
+      if (sc) ghost += '  <span class="ag">same ' + sc + ' sessions</span>';
     } else ghost = 'first time on ' + esc(ex.name);
   } else if (p.name && !p.body) {
     var m = rankMatches(p.name).slice(0, 6);
@@ -729,7 +855,22 @@ function commit(ex, p) {
     if (!ex.increment) ex.increment = DEFAULT_INC[detected];
   }
   var s = curSession(true);
-  s.entries.push({ exerciseId: ex.id, sets: sets, note: p.note || '' });
+  var newEntry = { exerciseId: ex.id, sets: sets, note: p.note || '' };
+  if (window._edit) {
+    var tgt = null;
+    for (var e2 = 0; e2 < DB.sessions.length; e2++) if (DB.sessions[e2].id === window._edit.sid) tgt = DB.sessions[e2];
+    if (tgt) tgt.entries.splice(Math.min(window._edit.idx, tgt.entries.length), 0, newEntry);
+    else s.entries.push(newEntry);
+    window._edit = null;
+  } else {
+    var existing = null;
+    for (var e3 = 0; e3 < s.entries.length; e3++) if (s.entries[e3].exerciseId === ex.id) existing = s.entries[e3];
+    if (existing) {
+      existing.sets = existing.sets.concat(sets);
+      if (p.note) existing.note = existing.note ? existing.note + '; ' + p.note : p.note;
+      toast('Added to ' + ex.name);
+    } else s.entries.push(newEntry);
+  }
   save();
   $('inp').value = ''; $('ghost').innerHTML = ''; $('ac').innerHTML = '';
   lastLogTime = Date.now();
@@ -758,7 +899,33 @@ function aliasTo(id) {
   ex.aliases.push(p.name); save();
   closeSheet(); commit(ex, p);
 }
+function editEntry(sid, idx) {
+  var sess = null;
+  for (var i = 0; i < DB.sessions.length; i++) if (DB.sessions[i].id === sid) sess = DB.sessions[i];
+  if (!sess || !sess.entries[idx]) { toast('Entry not found.'); return; }
+  var en = sess.entries[idx], ex = exerciseById(en.exerciseId);
+  sess.entries.splice(idx, 1);
+  window._edit = { sid: sid, idx: idx };
+  save(); renderLog();
+  $('inp').value = (ex ? ex.name : '') + ' ' + fmtSets(collapse(en.sets)) + (en.note ? ' // ' + en.note : '');
+  $('inp').focus(); onInput();
+  toast('Editing — change it and press log.');
+}
+function startFrom(sid) {
+  var src = null;
+  for (var i = 0; i < DB.sessions.length; i++) if (DB.sessions[i].id === sid) src = DB.sessions[i];
+  if (!src) { toast('Session not found.'); return; }
+  var cur = curSession(true);
+  for (var j = 0; j < src.entries.length; j++) {
+    var ex = exerciseById(src.entries[j].exerciseId);
+    if (!ex) continue;
+    cur.entries.push({ exerciseId: ex.id, sets: suggest(src.entries[j].sets, ex, 'same'), note: '' });
+  }
+  save(); renderLog();
+  toast('Pulled in ' + src.date + ' — edit each line as you go.');
+}
 function undo() {
+  window._edit = null;
   var s = curSession(false);
   if (!s || !s.entries.length) { toast('Nothing to undo.'); return; }
   var en = s.entries.pop();
@@ -766,6 +933,17 @@ function undo() {
   save(); renderLog();
   $('inp').value = ex.name + ' ' + fmtSets(collapse(en.sets)) + (en.note ? ' // ' + en.note : '');
   onInput();
+}
+function insertAt(ch) {
+  var el = $('inp');
+  var a = el.selectionStart, b = el.selectionEnd;
+  if (typeof a !== 'number') { el.value += ch; }
+  else {
+    el.value = el.value.slice(0, a) + ch + el.value.slice(b);
+    var pos = a + ch.length;
+    try { el.setSelectionRange(pos, pos); } catch (e) {}
+  }
+  el.focus(); onInput();
 }
 function quick(cmd) {
   var p = splitLine($('inp').value);
@@ -847,7 +1025,9 @@ function renderFind() {
     var lu = lastUseAtGym(ex.id, DB.settings.gym) || lastUseOf(ex.id);
     h += '<div class="card"><div class="t">' + esc(ex.name) + '</div>';
     h += pinsFor(ex, DB.settings.gym).map(function (x) { return '<div class="pin"><span class="mk">##</span><span>' + esc(x.text) + '</span></div>'; }).join('');
-    h += '<div class="d">' + (lu ? fmtSets(collapse(lu.entry.sets)) + '<br>' + agoText(lu.date) + ' · ' + lu.date + (lu.gym !== DB.settings.gym ? '<span class="pill">' + esc(lu.gym) + '</span>' : '') : 'No history yet.') + '</div></div>';
+    var tr = trendInfo(ex);
+    h += '<div class="d">' + (lu ? fmtSets(collapse(lu.entry.sets)) + '<br>' + agoText(lu.date) + ' · ' + lu.date + (lu.gym !== DB.settings.gym ? '<span class="pill">' + esc(lu.gym) + '</span>' : '') : 'No history yet.') +
+      (tr ? '<br>' + esc(tr) : '') + '</div></div>';
     h += '<h2>History</h2>';
     var n = 0;
     for (var i = DB.sessions.length - 1; i >= 0 && n < 40; i--) {
@@ -855,7 +1035,7 @@ function renderFind() {
       for (var j = s.entries.length - 1; j >= 0; j--) {
         if (s.entries[j].exerciseId !== ex.id) continue;
         var b = bestE1rm(s.entries[j].sets);
-        h += '<div class="res"><div class="dt">' + s.date + ' · ' + agoText(s.date) + (s.gym !== DB.settings.gym ? '<span class="pill">' + esc(s.gym) + '</span>' : '') + (b ? ' · e1RM ' + Math.round(b) : '') + '</div>' +
+        h += '<div class="res"><div class="dt">' + s.date + ' · ' + agoText(s.date) + (s.gym !== DB.settings.gym ? '<span class="pill">' + esc(s.gym) + '</span>' : '') + (b ? ' · e1RM ' + Math.round(b) : '') + (isPR(ex, s.entries[j]) ? '<span class="pill">PR</span>' : '') + '</div>' +
           '<div class="ln">' + fmtSetsHTML(collapse(s.entries[j].sets)) + '</div>' +
           (s.entries[j].note ? '<div class="note">' + esc(s.entries[j].note) + '</div>' : '') + '</div>';
         n++;
@@ -1281,6 +1461,7 @@ function tick() {
 $('inp').addEventListener('input', onInput);
 $('inp').addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); submit(); } });
 $('bGo').addEventListener('click', submit);
+$('bAt').addEventListener('click', function () { insertAt('@'); });
 $('bSame').addEventListener('click', function () { quick('same'); });
 $('bPlus').addEventListener('click', function () { quick('+'); });
 $('bUndo').addEventListener('click', undo);
