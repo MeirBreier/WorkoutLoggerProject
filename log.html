@@ -1112,7 +1112,8 @@ function editEx(id) {
   h += '</div>';
   h += '<input class="fld" id="ePin" placeholder="seat 4, arms 2" autocapitalize="off">';
   h += '<label class="lb"><input type="checkbox" id="ePinAll"> Applies at every gym</label>';
-  h += '<div style="margin-top:8px"><button class="btn sm" onclick="pushPin(\'' + id + '\')">Pin it</button></div>';
+  h += '<div style="margin-top:8px"><button class="btn sm" onclick="pushPin(\'' + id + '\')">Add another</button>' +
+    '<span class="muted" style="font-size:12px;margin-left:8px">or just press save below</span></div>';
   h += '<div style="margin-top:16px"><button class="btn pri" onclick="saveEx(\'' + id + '\')">Save changes</button></div>';
   h += '<label class="lb">Merge into another exercise</label><select class="fld" id="eMerge"><option value="">—</option>' +
     DB.exercises.filter(function (x) { return x.id !== id; }).map(function (x) { return '<option value="' + x.id + '">' + esc(x.name) + '</option>'; }).join('') + '</select>';
@@ -1123,27 +1124,48 @@ function editEx(id) {
   h += '<div style="margin-top:16px"><button class="btn sm" onclick="closeSheet()">Close</button></div>';
   openSheet(h);
 }
+function readExFields(e) {
+  if (!e) return 0;
+  try {
+    if ($('eName')) e.name = $('eName').value.trim() || e.name;
+    if ($('eAlias')) e.aliases = $('eAlias').value.split(',').map(function (s) { return s.trim(); }).filter(Boolean);
+    if ($('eGym')) e.gym = $('eGym').value.trim() || e.gym;
+    if ($('eInc')) e.increment = parseFloat($('eInc').value) || e.increment;
+    if ($('eType')) e.type = $('eType').value;
+    if ($('ePs')) e.perSide = $('ePs').checked;
+  } catch (err) {}
+  var t = '';
+  try { t = $('ePin') ? $('ePin').value.trim() : ''; } catch (err2) {}
+  if (t) {
+    var all = false;
+    try { all = $('ePinAll') ? $('ePinAll').checked : false; } catch (err3) {}
+    addPin(e, t, all);
+    try { $('ePin').value = ''; } catch (err4) {}
+    return 1;
+  }
+  return 0;
+}
 function saveEx(id) {
   var e = exerciseById(id);
-  e.name = $('eName').value.trim() || e.name;
-  e.aliases = $('eAlias').value.split(',').map(function (s) { return s.trim(); }).filter(Boolean);
-  e.gym = $('eGym').value.trim() || e.gym;
-  e.increment = parseFloat($('eInc').value) || e.increment;
-  e.type = $('eType').value;
-  e.perSide = $('ePs').checked;
-  save(); closeSheet(); renderList(); toast('Saved');
+  var pinned = readExFields(e);
+  save(); closeSheet(); renderList();
+  toast(pinned ? 'Saved, note pinned' : 'Saved');
 }
 function pushPin(id) {
-  var e = exerciseById(id), t = $('ePin').value.trim();
+  var e = exerciseById(id);
+  var t = '';
+  try { t = $('ePin').value.trim(); } catch (err) {}
   if (!t) { toast('Type the note first.'); return; }
-  addPin(e, t, $('ePinAll').checked);
-  editEx(id);
+  readExFields(e);
+  save(); editEx(id); toast('Pinned');
 }
 function dropPin(id, pid) {
-  removePin(exerciseById(id), pid);
+  var e = exerciseById(id);
+  readExFields(e);
+  removePin(e, pid);
   editEx(id);
 }
-function archiveEx(id) { var e = exerciseById(id); e.archived = !e.archived; save(); closeSheet(); renderList(); }
+function archiveEx(id) { var e = exerciseById(id); readExFields(e); e.archived = !e.archived; save(); closeSheet(); renderList(); }
 function deleteEx(id) {
   if (!confirm('Delete this exercise and every set logged under it?')) return;
   DB.exercises = DB.exercises.filter(function (x) { return x.id !== id; });
@@ -1154,6 +1176,7 @@ function deleteEx(id) {
 function mergeEx(id) {
   var target = $('eMerge').value; if (!target) { toast('Pick one to merge into.'); return; }
   var from = exerciseById(id), to = exerciseById(target);
+  readExFields(from);
   if (!confirm('Move all ' + from.name + ' history into ' + to.name + '?')) return;
   for (var i = 0; i < DB.sessions.length; i++)
     for (var j = 0; j < DB.sessions[i].entries.length; j++)
