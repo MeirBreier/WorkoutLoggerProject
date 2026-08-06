@@ -134,6 +134,8 @@ label.lb{display:block;font-size:12px;color:var(--dim);margin-top:10px}
 <div class="toast" id="toast"></div>
 
 <script>
+var VERSION = 9;
+var VERSION_DATE = '2026-08-06';
 var KEY = 'wl:v1';
 var mem = null, canPersist = true;
 
@@ -1191,6 +1193,7 @@ function exportText() {
   var out = [], s = DB.settings;
 
   out.push('# settings');
+  out.push('version: ' + VERSION);
   out.push('bodyweight: ' + s.bodyweight);
   out.push('unit: ' + s.unit);
   out.push('gyms: ' + s.gyms.join(', '));
@@ -1297,7 +1300,8 @@ function importText(txt) {
       var sm = /^([a-z]+)\s*:\s*(.+)$/i.exec(L);
       if (sm) {
         var key = sm[1].toLowerCase(), val = sm[2].trim();
-        if (key === 'bodyweight') DB.settings.bodyweight = parseFloat(val) || DB.settings.bodyweight;
+        if (key === 'version') { /* informational only */ }
+        else if (key === 'bodyweight') DB.settings.bodyweight = parseFloat(val) || DB.settings.bodyweight;
         else if (key === 'unit') DB.settings.unit = val;
         else if (key === 'gyms') {
           var gl = val.split(',').map(function (z) { return z.trim(); }).filter(Boolean);
@@ -1393,7 +1397,7 @@ function download(name, text) {
 function renderData() {
   $('hdTitle').textContent = 'Data';
   var sess = DB.sessions.filter(function (s) { return s.entries.length; }).length;
-  $('hdDate').textContent = sess + ' sessions';
+  $('hdDate').textContent = sess + ' sessions · v' + VERSION;
   var h = '';
   if (!canPersist) h += '<div class="warn">This page cannot write to storage right now. Open the file directly on your device for saving to work.</div>';
   else if (!backedUpRecently()) h += '<div class="warn">No recent export. iOS clears browser storage on its own schedule — save a copy while you are thinking about it.</div>';
@@ -1411,6 +1415,9 @@ function renderData() {
     '<div><label class="lb">Unit label</label><input class="fld" id="sUnit" value="' + esc(DB.settings.unit) + '"></div></div>' +
     '<label class="lb">Gyms (comma separated)</label><input class="fld" id="sGyms" value="' + esc(DB.settings.gyms.join(', ')) + '" autocapitalize="words">' +
     '<div style="margin-top:12px"><button class="btn pri" onclick="saveSettings()">Save settings</button></div></div>';
+  h += '<div class="card"><div class="t">Version</div><div class="d">v' + VERSION + ' · ' + VERSION_DATE +
+    '<br>If this is lower than the one you just uploaded, your phone is still running a cached copy.</div>' +
+    '<div style="margin-top:10px"><button class="btn sm" onclick="forceUpdate()">Check for update</button></div></div>';
   h += '<div class="card"><div class="t">Erase everything</div><div class="d">Removes all sessions and exercises from this device. Export first.</div>' +
     '<div style="margin-top:10px"><button class="btn dgr" onclick="wipe()">Erase</button></div></div>';
   $('v-data').innerHTML = h;
@@ -1433,6 +1440,30 @@ function saveSettings() {
   if (gs.length) DB.settings.gyms = gs;
   if (DB.settings.gyms.indexOf(DB.settings.gym) < 0) DB.settings.gym = DB.settings.gyms[0];
   save(); renderData(); toast('Saved');
+}
+function forceUpdate() {
+  toast('Checking…');
+  try {
+    if ('caches' in window) {
+      caches.keys().then(function (keys) {
+        return Promise.all(keys.map(function (k) { return caches.delete(k); }));
+      }).then(reloadNow, reloadNow);
+      return;
+    }
+  } catch (e) {}
+  reloadNow();
+}
+function reloadNow() {
+  try {
+    if (navigator.serviceWorker && navigator.serviceWorker.getRegistrations) {
+      navigator.serviceWorker.getRegistrations().then(function (rs) {
+        for (var i = 0; i < rs.length; i++) rs[i].update();
+        setTimeout(function () { location.reload(true); }, 400);
+      }, function () { location.reload(true); });
+      return;
+    }
+  } catch (e) {}
+  location.reload(true);
 }
 function wipe() {
   if (!confirm('Erase all workout data on this device?')) return;

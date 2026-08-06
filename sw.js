@@ -1,4 +1,4 @@
-var CACHE = 'log-v2';
+var CACHE = 'log-v9';
 var ASSETS = ['./', './log.html', './manifest.json'];
 
 self.addEventListener('install', function (e) {
@@ -26,16 +26,19 @@ self.addEventListener('fetch', function (e) {
   if (req.method !== 'GET') return;
   if (new URL(req.url).origin !== self.location.origin) return;
 
+  // Network first: with signal you always get the newest version.
+  // Cache is the fallback, so offline still works.
   e.respondWith(
-    caches.match(req, { ignoreSearch: true }).then(function (hit) {
-      var live = fetch(req).then(function (res) {
-        if (res && res.ok) {
-          var copy = res.clone();
-          caches.open(CACHE).then(function (c) { c.put(req, copy); });
-        }
-        return res;
-      }).catch(function () { return hit; });
-      return hit || live;
-    }).catch(function () { return fetch(req); })
+    fetch(req).then(function (res) {
+      if (res && res.ok) {
+        var copy = res.clone();
+        caches.open(CACHE).then(function (c) { c.put(req, copy); });
+      }
+      return res;
+    }).catch(function () {
+      return caches.match(req, { ignoreSearch: true }).then(function (hit) {
+        return hit || caches.match('./log.html');
+      });
+    })
   );
 });
