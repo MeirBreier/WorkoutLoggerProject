@@ -100,6 +100,8 @@ h2:first-child{margin-top:4px}
 .keys button.k-at{color:var(--accent);font-size:18px}
 .keys button.k-f{color:var(--fail);font-size:18px}
 .keys button.k-e{color:var(--easy);font-size:18px}
+.keys button.k-c{color:var(--gold);font-size:18px;letter-spacing:1px}
+.keys button{padding:0 2px}
 .keys button:active{background:var(--rule)}
 
 .ac{display:flex;gap:6px;overflow-x:auto;padding:8px 0 2px;scrollbar-width:none}
@@ -175,6 +177,7 @@ label.lb{display:block;font-size:12px;color:var(--dim);margin-top:14px;font-weig
     <button id="kSide">/s</button>
     <button class="k-f" id="kFail">!</button>
     <button class="k-e" id="kEasy">~</button>
+    <button class="k-c" id="kCarry">…</button>
   </div>
   <div class="bar">
     <button id="bSame">same</button>
@@ -196,7 +199,7 @@ label.lb{display:block;font-size:12px;color:var(--dim);margin-top:14px;font-weig
 <div class="toast" id="toast"></div>
 
 <script>
-var VERSION = 11;
+var VERSION = 12;
 var VERSION_DATE = '2026-08-06';
 var KEY = 'wl:v1';
 var mem = null, canPersist = true;
@@ -1857,6 +1860,7 @@ $('kComma').addEventListener('click', function () { insertAt(', '); });
 $('kSide').addEventListener('click', function () { insertAt('/s'); });
 $('kFail').addEventListener('click', function () { insertAt('!'); });
 $('kEasy').addEventListener('click', function () { insertAt('~'); });
+$('kCarry').addEventListener('click', function () { insertAt('...'); });
 $('bSame').addEventListener('click', function () { quick('same'); });
 $('bPlus').addEventListener('click', function () { quick('+'); });
 $('bUndo').addEventListener('click', undo);
