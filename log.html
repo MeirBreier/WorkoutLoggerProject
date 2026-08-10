@@ -94,6 +94,7 @@ h2:first-child{margin-top:4px}
 .echo{font-size:12px;min-height:16px;line-height:16px;margin-top:6px;color:var(--dim);white-space:nowrap;overflow-x:auto}
 .echo.good{color:var(--easy)}
 .echo.raw{color:var(--gold)}
+.echo.carryecho{color:var(--gold)}
 
 .keys{display:flex;gap:6px;margin-top:8px}
 .keys button{flex:1;min-height:42px;background:var(--panel2);border-radius:10px;font-family:var(--mono);font-size:16px;color:var(--bone)}
@@ -199,7 +200,7 @@ label.lb{display:block;font-size:12px;color:var(--dim);margin-top:14px;font-weig
 <div class="toast" id="toast"></div>
 
 <script>
-var VERSION = 12;
+var VERSION = 13;
 var VERSION_DATE = '2026-08-06';
 var KEY = 'wl:v1';
 var mem = null, canPersist = true;
@@ -1029,8 +1030,17 @@ function onInput() {
   $('ghost').innerHTML = ghost;
   $('pins').innerHTML = pins;
   $('ac').innerHTML = chips;
-  var eb = $('echo');
-  if (p.body && p.body.trim() && !/^(same|next|[+-]\d*)$/i.test(p.body.trim())) {
+  var eb = $('echo'), bt = (p.body || '').trim();
+  if (bt === '...') {
+    eb.textContent = (ex ? ex.name : 'This') + ' \u2192 saved to come back to, nothing logged';
+    eb.className = 'echo carryecho';
+  } else if (bt === 'same' || bt === 'next') {
+    eb.textContent = 'repeats last time \u2014 press log to fill the box';
+    eb.className = 'echo';
+  } else if (/^[+-]\d*$/.test(bt)) {
+    eb.textContent = 'progresses last time \u2014 press log to fill the box';
+    eb.className = 'echo';
+  } else if (bt) {
     var d = describeSets(expandSets(parseSets(p.body).sets));
     eb.textContent = d.text;
     eb.className = 'echo ' + d.kind;
