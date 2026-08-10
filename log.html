@@ -64,7 +64,21 @@ h2:first-child{margin-top:4px}
 .entry .ln{font-family:var(--mono);font-size:18px;color:var(--bone);margin-top:5px;word-break:break-word;line-height:1.55;letter-spacing:-.01em}
 .entry .meta{font-family:var(--mono);font-size:12px;color:var(--faint);margin-top:6px}
 .entry .note{font-size:13px;color:var(--dim);margin-top:5px;font-style:italic}
-.mk-f{color:var(--fail)}.mk-e{color:var(--easy)}
+.mk-f{color:var(--fail)}.mk-e{color:var(--easy)}.mk-c{color:var(--gold)}
+.carry{background:var(--panel);border-radius:var(--radius);padding:11px 12px;margin-bottom:12px;border-left:3px solid var(--gold)}
+.carry .clabel{font-size:12px;font-weight:600;color:var(--gold);letter-spacing:.05em;text-transform:uppercase}
+.carry .chead{display:flex;align-items:center;gap:8px;min-height:32px;flex:1;text-align:left}
+.carry .cav{color:var(--gold);font-size:17px;line-height:1;display:inline-block;transition:transform .16s;transform:rotate(0deg)}
+.carry .cav.op{transform:rotate(90deg)}
+.carry .csum{font-size:12px;color:var(--faint);font-family:var(--mono)}
+.chips{display:flex;flex-wrap:wrap;gap:7px;margin-top:9px}
+.chip{display:inline-flex;align-items:stretch;background:var(--panel2);border-radius:999px;overflow:hidden}
+.chip>button{padding:0 4px 0 14px;min-height:40px;font-size:14px;display:flex;align-items:center;gap:6px}
+.chip .cage{font-size:11px;color:var(--faint);font-family:var(--mono)}
+.chip .cx{padding:0 13px;min-height:40px;color:var(--faint);font-size:17px}
+.chip.pick>button{padding:0 16px}
+.chip.pick{border:2px solid transparent}
+.chip.pick.on{border-color:var(--accent);background:var(--accent);color:var(--onaccent)}
 
 .pad{position:fixed;left:0;right:0;bottom:calc(62px + env(safe-area-inset-bottom));background:var(--panel);border-top:1px solid var(--rule);padding:10px 12px 12px;z-index:15}
 .pad .ghost{font-family:var(--mono);font-size:12px;color:var(--accent);min-height:17px;line-height:17px;white-space:nowrap;overflow-x:auto;overflow-y:hidden;margin-bottom:6px}
@@ -182,15 +196,15 @@ label.lb{display:block;font-size:12px;color:var(--dim);margin-top:14px;font-weig
 <div class="toast" id="toast"></div>
 
 <script>
-var VERSION = 9;
+var VERSION = 11;
 var VERSION_DATE = '2026-08-06';
 var KEY = 'wl:v1';
 var mem = null, canPersist = true;
 
 function blank() {
   return {
-    settings: { gym: 'Home', gyms: ['Home'], bodyweight: 180, unit: 'lb', lastBackup: null, sessionCount: 0, theme: 'dark' },
-    exercises: [], sessions: [], templates: []
+    settings: { gym: 'Home', gyms: ['Home'], bodyweight: 180, unit: 'lb', lastBackup: null, sessionCount: 0, theme: 'dark', carryOpen: true },
+    exercises: [], sessions: [], templates: [], carryover: []
   };
 }
 function load() {
@@ -206,6 +220,8 @@ function save() {
 function migrate(d) {
   if (!d.sessions) return blank();
   if (!d.settings.theme) d.settings.theme = 'dark';
+  if (!d.carryover) d.carryover = [];
+  if (typeof d.settings.carryOpen !== 'boolean') d.settings.carryOpen = true;
   for (var i = 0; i < d.sessions.length; i++)
     for (var j = 0; j < d.sessions[i].entries.length; j++)
       d.sessions[i].entries[j].sets = d.sessions[i].entries[j].sets.map(up);
@@ -327,6 +343,7 @@ function rankMatches(q) {
 /* ---------- parser ---------- */
 function isSetish(tok) {
   var t = tok.replace(/,$/, '');
+  if (t === '...') return true;
   if (/^[:\d]/.test(t)) return true;
   if (/^(same|next)$/i.test(t)) return true;
   if (/^[+-]\d*$/.test(t)) return true;
@@ -385,8 +402,10 @@ function parseIntensity(s, amt) {
 }
 function parseOneSet(tok) {
   var s = String(tok).trim(); if (!s) return null;
-  var mark = null, m = /([!~])$/.exec(s);
-  if (m) { mark = m[1]; s = s.slice(0, -1); }
+  var mark = null, m;
+  if (/\.\.\.$/.test(s)) { mark = '...'; s = s.slice(0, -3); }
+  else { m = /([!~])$/.exec(s); if (m) { mark = m[1]; s = s.slice(0, -1); } }
+  if (!s) return null;
   var count = 1;
   m = /x(\d+)$/i.exec(s);
   if (m) { count = +m[1]; s = s.slice(0, m.index); }
@@ -486,6 +505,7 @@ function fmtSetsHTML(sets) {
     var t = fmtSet(s);
     if (s.mark === '!') return '<span class="mk-f">' + t + '</span>';
     if (s.mark === '~') return '<span class="mk-e">' + t + '</span>';
+    if (s.mark === '...') return '<span class="mk-c">' + t + '</span>';
     return t;
   }).join(', ');
 }
@@ -560,7 +580,7 @@ function suggest(sets, ex, mode) {
     var s = JSON.parse(JSON.stringify(src[i])), step;
     if (mode === 'same' || type === 'free') step = 0;
     else if (typeof mode === 'number') step = mode;
-    else step = s.mark === '~' ? inc * 2 : s.mark === '!' ? 0 : inc;
+    else step = s.mark === '~' ? inc * 2 : (s.mark === '!' || s.mark === '...') ? 0 : inc;
     if (step) {
       if (type === 'load') {
         if (s.i.t === 'bw') s.i.delta = (s.i.delta || 0) + step;
@@ -713,6 +733,7 @@ function describeSet(s) {
   if (s.perSide) tail += ' per side';
   if (s.mark === '!') tail += ' · to failure';
   if (s.mark === '~') tail += ' · easy';
+  if (s.mark === '...') tail += ' · unfinished';
   return amt + inten + tail;
 }
 function describeSets(sets) {
@@ -728,6 +749,59 @@ function describeSets(sets) {
   var txt = parts.join('  ·  ');
   if (pc) txt += '  ·  ' + fmtPace(pc);
   return { text: txt, kind: raw ? 'raw' : 'good' };
+}
+
+
+/* ---------- carry-over ---------- */
+var CARRY_DAYS = 14;
+function pruneCarry() {
+  var before = DB.carryover.length;
+  DB.carryover = DB.carryover.filter(function (c) {
+    return exerciseById(c.exId) && daysBetween(c.date, today()) < CARRY_DAYS;
+  });
+  if (DB.carryover.length !== before) save();
+}
+function addCarry(exId, gym) {
+  if (!exId) return;
+  for (var i = 0; i < DB.carryover.length; i++) {
+    if (DB.carryover[i].exId === exId && DB.carryover[i].gym === gym) {
+      DB.carryover[i].date = today(); save(); return;
+    }
+  }
+  DB.carryover.push({ id: uid(), exId: exId, gym: gym, date: today() });
+  save();
+}
+function carryFor(gym) {
+  pruneCarry();
+  return DB.carryover.filter(function (c) { return c.gym === gym; })
+    .sort(function (a, b) { return a.date < b.date ? 1 : -1; });
+}
+function carryOther(gym) {
+  pruneCarry();
+  var out = {};
+  for (var i = 0; i < DB.carryover.length; i++) {
+    var c = DB.carryover[i];
+    if (c.gym === gym) continue;
+    (out[c.gym] = out[c.gym] || []).push(c);
+  }
+  return out;
+}
+function dropCarry(id) {
+  DB.carryover = DB.carryover.filter(function (c) { return c.id !== id; });
+  save();
+}
+function clearCarryForExercise(exId) {
+  var before = DB.carryover.length;
+  DB.carryover = DB.carryover.filter(function (c) { return c.exId !== exId; });
+  if (DB.carryover.length !== before) { save(); return true; }
+  return false;
+}
+function carryAge(c) {
+  return c.date === today() ? 'earlier today' : agoText(c.date);
+}
+function setsCarry(sets) {
+  for (var i = 0; i < sets.length; i++) if (sets[i].mark === '...') return true;
+  return false;
 }
 
 var $ = function (id) { return document.getElementById(id); };
@@ -758,8 +832,51 @@ function curSession(make) {
 function closeSession() {
   var s = curSession(false);
   if (!s || !s.entries.length) { toast('Nothing to close.'); return; }
-  s.closed = true; save(); renderLog();
+  var plan = DB.settings.plan;
+  if (plan && plan.date === today() && plan.gym === DB.settings.gym) {
+    var done = {}, missed = [];
+    for (var i = 0; i < s.entries.length; i++) done[s.entries[i].exerciseId] = 1;
+    for (var j = 0; j < plan.ids.length; j++) if (!done[plan.ids[j]]) missed.push(plan.ids[j]);
+    if (missed.length) { offerMissed(missed, s.id); return; }
+  }
+  finishClose(s);
+}
+function finishClose(s) {
+  s.closed = true;
+  DB.settings.plan = null;
+  save(); renderLog();
   toast('Session closed. The next thing you log starts a new one.');
+}
+function offerMissed(ids, sid) {
+  var h = '<h3>Close session</h3><div class="muted" style="font-size:13px">From your template, these were not logged. Tap any you want to come back to.</div>';
+  h += '<div class="chips" style="margin-top:12px">';
+  for (var i = 0; i < ids.length; i++) {
+    var ex = exerciseById(ids[i]);
+    if (!ex) continue;
+    h += '<span class="chip pick"><button id="mk_' + ids[i] + '" onclick="toggleMissed(\'' + ids[i] + '\')">' + esc(ex.name) + '</button></span>';
+  }
+  h += '</div>';
+  h += '<div style="margin-top:18px"><button class="btn pri wide" onclick="confirmClose(\'' + sid + '\')">Close session</button></div>';
+  window._missed = {};
+  openSheet(h);
+}
+function toggleMissed(id) {
+  window._missed = window._missed || {};
+  window._missed[id] = !window._missed[id];
+  try {
+    var el = $('mk_' + id);
+    el.parentNode.className = 'chip pick' + (window._missed[id] ? ' on' : '');
+  } catch (e) {}
+}
+function confirmClose(sid) {
+  var s = null;
+  for (var i = 0; i < DB.sessions.length; i++) if (DB.sessions[i].id === sid) s = DB.sessions[i];
+  var picked = window._missed || {}, n = 0;
+  for (var id in picked) if (picked[id]) { addCarry(id, DB.settings.gym); n++; }
+  window._missed = null;
+  closeSheet();
+  if (s) finishClose(s);
+  if (n) toast(n + ' saved to come back to');
 }
 function reopenSession(id) {
   var open = curSession(false);
@@ -778,6 +895,38 @@ function renderLog() {
   if (!canPersist) h += '<div class="warn">Storage is unavailable here, so nothing will be kept after you close this. Open the file directly on your phone or from your hosted URL for it to save.</div>';
   else if (DB.settings.sessionCount > 0 && DB.settings.sessionCount % 12 === 0 && !backedUpRecently()) {
     h += '<div class="warn">It has been a while since you exported. Head to Data and save a copy — iOS clears browser storage on its own schedule.</div>';
+  }
+  var cs = carryFor(DB.settings.gym);
+  var others = carryOther(DB.settings.gym);
+  var otherCount = 0;
+  for (var ok in others) otherCount += others[ok].length;
+  if (cs.length || otherCount) {
+    var open = DB.settings.carryOpen !== false;
+    var bits = [];
+    if (cs.length) bits.push(cs.length + ' here');
+    if (otherCount) bits.push(otherCount + ' elsewhere');
+    h += '<div class="carry">';
+    h += '<div class="row">';
+    h += '<button class="chead" onclick="toggleCarry()"><span class="cav' + (open ? ' op' : '') + '">\u203A</span>' +
+      '<span class="clabel">Come back to</span>' +
+      (open ? '' : '<span class="csum">' + bits.join(' · ') + '</span>') + '</button>';
+    if (otherCount) h += '<button class="sp btn sm" onclick="openAllCarry()">All gyms</button>';
+    h += '</div>';
+    if (open) {
+      if (cs.length) {
+        h += '<div class="chips">';
+        for (var ci = 0; ci < cs.length; ci++) {
+          var cex = exerciseById(cs[ci].exId);
+          h += '<span class="chip"><button onclick="loadCarry(\'' + cs[ci].id + '\')">' + esc(cex ? cex.name : '?') +
+            ' <span class="cage">' + carryAge(cs[ci]) + '</span></button>' +
+            '<button class="cx" onclick="dismissCarry(\'' + cs[ci].id + '\')">&times;</button></span>';
+        }
+        h += '</div>';
+      } else {
+        h += '<div class="muted" style="font-size:13px;margin-top:6px">Nothing outstanding here. ' + otherCount + ' at another gym.</div>';
+      }
+    }
+    h += '</div>';
   }
   var todays = sessionsToday(DB.settings.gym);
   var anything = false;
@@ -899,9 +1048,14 @@ function submit() {
   if (!p.name) { toast('Start with the exercise name.'); return; }
   var ex = findExercise(p.name);
   if (!ex) {
-    var m = rankMatches(p.name);
-    askNew(p, m.slice(0, 5));
-    return;
+    if (/\.\.\.(\s|$)/.test(p.body) || p.body.trim() === '...') {
+      ex = newExercise(p.name);
+      toast('Added ' + ex.name + ' to your list');
+    } else {
+      var m = rankMatches(p.name);
+      askNew(p, m.slice(0, 5));
+      return;
+    }
   }
   commit(ex, p);
 }
@@ -916,6 +1070,12 @@ function commit(ex, p) {
       toast('Pinned to ' + ex.name + ' at ' + DB.settings.gym);
       return;
     }
+  }
+  if (body === '...') {
+    addCarry(ex.id, DB.settings.gym);
+    $('inp').value = ''; onInput(); renderLog();
+    toast(ex.name + ' saved to come back to');
+    return;
   }
   if (!body) { toast('Add at least one set.'); return; }
   if (body === 'same' || body === 'next' || /^[+-]\d*$/.test(body)) {
@@ -961,6 +1121,8 @@ function commit(ex, p) {
       toast('Added to ' + ex.name);
     } else s.entries.push(newEntry);
   }
+  clearCarryForExercise(ex.id);
+  if (setsCarry(sets)) addCarry(ex.id, DB.settings.gym);
   save();
   $('inp').value = ''; $('ghost').innerHTML = ''; $('ac').innerHTML = '';
   $('echo').textContent = ''; $('echo').className = 'echo'; $('pins').innerHTML = '';
@@ -989,6 +1151,48 @@ function aliasTo(id) {
   var ex = exerciseById(id), p = window._pending;
   ex.aliases.push(p.name); save();
   closeSheet(); commit(ex, p);
+}
+function toggleCarry() {
+  DB.settings.carryOpen = DB.settings.carryOpen === false;
+  save(); renderLog();
+}
+function loadCarry(id) {
+  var c = null;
+  for (var i = 0; i < DB.carryover.length; i++) if (DB.carryover[i].id === id) c = DB.carryover[i];
+  if (!c) return;
+  var ex = exerciseById(c.exId);
+  if (!ex) { dropCarry(id); renderLog(); return; }
+  closeSheet();
+  $('inp').value = ex.name + ' ';
+  $('inp').focus(); onInput();
+}
+function dismissCarry(id) {
+  dropCarry(id); renderLog();
+  toast('Cleared');
+}
+function openAllCarry() {
+  var others = carryOther(DB.settings.gym), mine = carryFor(DB.settings.gym);
+  var h = '<h3>Come back to</h3><div class="muted" style="font-size:13px">Tap to load it into the box. Logging it anywhere clears it.</div>';
+  function block(gym, list) {
+    var s = '<h2>' + esc(gym) + '</h2>';
+    for (var i = 0; i < list.length; i++) {
+      var ex = exerciseById(list[i].exId);
+      s += '<div class="card"><div class="row"><button style="text-align:left" onclick="loadCarry(\'' + list[i].id + '\')">' +
+        '<div class="t">' + esc(ex ? ex.name : '?') + '</div>' +
+        '<div class="d">' + carryAge(list[i]) + '</div></button>' +
+        '<button class="sp btn sm" onclick="dismissCarry(\'' + list[i].id + '\');openAllCarry()">Clear</button></div></div>';
+    }
+    return s;
+  }
+  if (mine.length) h += block(DB.settings.gym + ' · here now', mine);
+  for (var g in others) h += block(g, others[g]);
+  if (!mine.length) {
+    var any = false;
+    for (var g2 in others) any = true;
+    if (!any) h += '<div class="empty">Nothing outstanding anywhere.</div>';
+  }
+  h += '<div style="margin-top:16px"><button class="btn sm" onclick="closeSheet()">Close</button></div>';
+  openSheet(h);
 }
 function editEntry(sid, idx) {
   var sess = null;
@@ -1090,6 +1294,8 @@ function openTemplates() {
 function useTemplate(id) {
   var t = null; for (var i = 0; i < DB.templates.length; i++) if (DB.templates[i].id === id) t = DB.templates[i];
   window._queue = t.exerciseIds.slice();
+  DB.settings.plan = { date: today(), gym: DB.settings.gym, ids: t.exerciseIds.slice(), name: t.name };
+  save();
   closeSheet(); nextFromQueue();
 }
 function delTemplate(id) {
@@ -1325,6 +1531,18 @@ function exportText() {
     out.push('');
   }
 
+  var cg = {};
+  for (var cv = 0; cv < DB.carryover.length; cv++) {
+    var cc = DB.carryover[cv], cex = exerciseById(cc.exId);
+    if (!cex) continue;
+    (cg[cc.gym] = cg[cc.gym] || []).push(cex.name + ' | ' + cc.date);
+  }
+  for (var cgk in cg) {
+    out.push('# comeback @ ' + cgk);
+    out = out.concat(cg[cgk]);
+    out.push('');
+  }
+
   var ss = DB.sessions.slice().sort(function (m, n) { return m.date < n.date ? -1 : 1; });
   for (var i = 0; i < ss.length; i++) {
     var sn = ss[i];
@@ -1372,7 +1590,7 @@ function pushRow(rows, s, ex, n, st, isDrop, note) {
 function importText(txt) {
   var lines = txt.split(/\r?\n/);
   var date = today(), gym = DB.settings.gym, added = 0, skipped = 0, pinned = 0, pinGym = false;
-  var mode = 'session', tplName = null, exCount = 0, stime = null;
+  var mode = 'session', tplName = null, exCount = 0, stime = null, carryGym = null, carried = 0;
   for (var i = 0; i < lines.length; i++) {
     var L = lines[i].trim();
     if (!L) continue;
@@ -1382,6 +1600,8 @@ function importText(txt) {
     if (/^#\s*exercises\s*$/i.test(L)) { mode = 'exercises'; continue; }
     var tm = /^#\s*template\s+(.+)$/i.exec(L);
     if (tm) { mode = 'template'; tplName = tm[1].trim(); continue; }
+    var cm = /^#\s*comeback\s*@\s*(.+)$/i.exec(L);
+    if (cm) { mode = 'comeback'; carryGym = cm[1].trim(); continue; }
     var pm = /^#\s*pins\s*@\s*(.+)$/i.exec(L);
     if (pm) { mode = 'pins'; pinGym = pm[1].trim().toLowerCase() === 'all' ? null : pm[1].trim(); continue; }
 
@@ -1418,6 +1638,16 @@ function importText(txt) {
         } else if (/^perside$/i.test(f[fi])) ex0.perSide = true;
         else if (/^archived$/i.test(f[fi])) ex0.archived = true;
       }
+      continue;
+    }
+    if (mode === 'comeback') {
+      var cf = L.split('|').map(function (z) { return z.trim(); });
+      var cnm = cf[0];
+      if (!cnm) { skipped++; continue; }
+      var cex2 = findExercise(cnm) || newExercise(cnm, { gym: carryGym || gym });
+      var cdate = /^\d{4}-\d{2}-\d{2}$/.test(cf[1] || '') ? cf[1] : today();
+      var dup = DB.carryover.some(function (z) { return z.exId === cex2.id && z.gym === (carryGym || gym); });
+      if (!dup) { DB.carryover.push({ id: uid(), exId: cex2.id, gym: carryGym || gym, date: cdate }); carried++; }
       continue;
     }
     if (mode === 'template') {
@@ -1471,7 +1701,8 @@ function importText(txt) {
     if (seen[sz.gym]) sz.closed = true; else { seen[sz.gym] = 1; sz.closed = false; }
   }
   save();
-  return { added: added, skipped: skipped, pinned: pinned, exercises: exCount };
+  pruneCarry();
+  return { added: added, skipped: skipped, pinned: pinned, exercises: exCount, carried: carried };
 }
 function download(name, text) {
   try {
@@ -1526,7 +1757,7 @@ function doImport() {
   if (!t.trim()) { toast('Paste something first.'); return; }
   var r = importText(t);
   renderData(); renderLog();
-  toast('Added ' + r.added + ' lines' + (r.exercises ? ', ' + r.exercises + ' exercises' : '') + (r.pinned ? ', ' + r.pinned + ' pins' : '') + (r.skipped ? ', skipped ' + r.skipped : ''));
+  toast('Added ' + r.added + ' lines' + (r.exercises ? ', ' + r.exercises + ' exercises' : '') + (r.pinned ? ', ' + r.pinned + ' pins' : '') + (r.carried ? ', ' + r.carried + ' to come back to' : '') + (r.skipped ? ', skipped ' + r.skipped : ''));
 }
 function saveSettings() {
   DB.settings.bodyweight = parseFloat($('sBw').value) || DB.settings.bodyweight;
