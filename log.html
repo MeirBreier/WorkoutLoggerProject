@@ -200,7 +200,7 @@ label.lb{display:block;font-size:12px;color:var(--dim);margin-top:14px;font-weig
 <div class="toast" id="toast"></div>
 
 <script>
-var VERSION = 13;
+var VERSION = 14;
 var VERSION_DATE = '2026-08-06';
 var KEY = 'wl:v1';
 var mem = null, canPersist = true;
@@ -428,11 +428,19 @@ function rawSet(text) { return { a: { t: 'txt', text: text }, i: { t: 'none' }, 
 function tidy(chunk) { return chunk.replace(/(\d)\s+([a-z@])/gi, '$1$2').replace(/\s+/g, ''); }
 function parseSets(body) {
   var chunks = body.split(',').map(function (s) { return s.trim(); }).filter(Boolean);
-  var out = [];
+  var out = [], carry = null, carrySide = false;
   for (var i = 0; i < chunks.length; i++) {
     var parts = chunks[i].split('>').map(function (s) { return s.trim(); }).filter(Boolean);
     var head = parseOneSet(tidy(parts[0]));
-    if (!head) { out.push(rawSet(chunks[i])); continue; }
+    if (!head) { out.push(rawSet(chunks[i])); carry = null; continue; }
+    if (head.i.t === 'none' && carry && head.a.t === 'reps') {
+      head.i = JSON.parse(JSON.stringify(carry));
+      if (carrySide) head.perSide = true;
+      head.inherited = true;
+    } else if (head.i.t !== 'none') {
+      carry = JSON.parse(JSON.stringify(head.i));
+      carrySide = head.perSide;
+    }
     if (parts.length > 1) {
       head.drops = [];
       for (var k = 1; k < parts.length; k++) head.drops.push(parseOneSet(tidy(parts[k])) || rawSet(parts[k]));
@@ -446,7 +454,7 @@ function expandSets(sets) {
   for (var i = 0; i < sets.length; i++) {
     var s = sets[i], n = s.count || 1;
     for (var k = 0; k < n; k++) {
-      var c = JSON.parse(JSON.stringify(s));
+      var c = stripInherit(s);
       c.count = 1;
       if (k < n - 1) c.mark = null;
       out.push(c);
@@ -495,6 +503,7 @@ function fmtSet(s) {
 }
 function fmtSets(sets) { return sets.map(fmtSet).join(', '); }
 function sameShape(a, b) { return JSON.stringify([a.a, a.i, a.perSide]) === JSON.stringify([b.a, b.i, b.perSide]); }
+function stripInherit(s) { var c = JSON.parse(JSON.stringify(s)); delete c.inherited; if (c.drops) c.drops = c.drops.map(stripInherit); return c; }
 function collapse(sets) {
   var out = [];
   for (var i = 0; i < sets.length; i++) {
